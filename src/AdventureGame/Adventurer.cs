@@ -29,7 +29,6 @@ public class Adventurer
     {
         hasKey = b;
     }
-
     public override string ToString()
     {
         return $"Adventurer[hasLamp={hasLamp}, hasKey={hasKey}]";
