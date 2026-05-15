@@ -15,9 +15,16 @@ public class AdventureGame
 	private Room[,] dungeon;
 	private int aRow;
 	private int aCol;
+	private int grueRow;
+	private int grueCol;
+	private int exitRow;
+	private int exitCol;
 	private bool isChestOpen;
 	private bool hasPlayerQuit;
 	private bool isAdventureAlive;
+    private bool grueActive;
+	private bool hasAdventurerDied;
+	private bool hasAdventurerExitDungeon;
 	private string lastDirection;
 	private string lastMessage;
 
@@ -71,12 +78,12 @@ public class AdventureGame
 
 		dungeon = Load("Dungeon.txt");
 
-		aRow = 3;
-		aCol = 1;
-
 		isChestOpen = false;
 		hasPlayerQuit = false;
 		isAdventureAlive = true;
+        grueActive = false;
+		hasAdventurerDied = false;
+		hasAdventurerExitDungeon = false;
 
 		lastDirection = string.Empty;
 		lastMessage = string.Empty;
@@ -98,6 +105,20 @@ public class AdventureGame
 		else
 		{
 			Console.WriteLine("This room is pitch black!");
+		}
+
+        if(grueActive)
+		{
+    		var path = FindPathToAdventure();
+
+    		Console.WriteLine("\nGrue path:");
+
+    		foreach (var step in path)
+    		{
+        		Console.Write($"({step.row},{step.col}) ");
+    		}
+
+    		Console.WriteLine();
 		}
 	}
 
@@ -133,10 +154,11 @@ public class AdventureGame
 	{
 		Room r = dungeon[aRow, aCol];
 
-		if(!adventurer.HasLamp() && !r.IsLit() && input != lastDirection)
+		if(grueActive && !adventurer.HasLamp() && !r.IsLit() && input != lastDirection)
 		{
 			Console.WriteLine("You got eaten alive by the Grue!");
 			isAdventureAlive = false;
+			return;
 		}
 		else if(input == GO_NORTH)
 		{
@@ -170,21 +192,53 @@ public class AdventureGame
 		{
 			Quit();
 		}
+
 	}
 
 	private void UpdateGameState()
 	{
+		hasAdventurerExitDungeon = (isChestOpen && aRow == exitRow && aCol == exitCol);
 
+		if(hasAdventurerExitDungeon) { return; }
+
+		if(isChestOpen)
+		{
+			List<(int row, int col)> path = FindPathToAdventure();
+
+			if(path.Count > 1)
+			{
+				grueRow = path[1].row;
+            	grueCol = path[1].col;
+			}
+		
+			hasAdventurerDied = (grueRow == aRow && grueCol == aCol);
+
+			if(hasAdventurerDied)
+			{
+				isAdventureAlive = false;
+
+				var lastStep = path[path.Count - 1];
+            	Console.WriteLine($"Grue final step: ({lastStep.row},{lastStep.col})\nThe Grue caught you!");
+			}
+		}
 	}
+
 
 	private bool IsGameOver()
 	{
-		return isChestOpen || hasPlayerQuit || !isAdventureAlive;
+		return hasPlayerQuit || hasAdventurerDied || hasAdventurerExitDungeon;
 	}
 
 	private void ShowGameOverScreen()
 	{
-		Console.WriteLine("Game Over!");
+        if(!isAdventureAlive)
+        {
+            Console.WriteLine("You died!");
+        }
+		else if(hasAdventurerExitDungeon)
+    	{
+        	Console.WriteLine("You escaped with the treasure!");
+    	}
 	}
 
 	private void GoNorth(Room r)
@@ -275,6 +329,8 @@ public class AdventureGame
 			{
 				Console.WriteLine("You got the treasure!");
 				isChestOpen = true;
+
+                grueActive = true;
 			}
 			else
 			{
@@ -300,18 +356,20 @@ public class AdventureGame
 		int rows = int.Parse(lines[0]);
 		int cols = int.Parse(lines[1]);
 
-		int exitRow = int.Parse(lines[2]);
-		int exitCol = int.Parse(lines[3]);
+		this.exitRow = int.Parse(lines[2]);
+		this.exitCol = int.Parse(lines[3]);
 		int lampRow = int.Parse(lines[4]);
 		int lampCol = int.Parse(lines[5]);
 		int keyRow = int.Parse(lines[6]);
 		int keyCol = int.Parse(lines[7]);
 		int chestRow = int.Parse(lines[8]);
 		int chestCol = int.Parse(lines[9]);
+		this.grueRow = int.Parse(lines[10]);
+		this.grueCol = int.Parse(lines[11]);
+		this.aRow = int.Parse(lines[12]);
+		this.aCol = int.Parse(lines[13]);
 
-		// lines[10] and lines[11] are grueRow/grueCol if needed elsewhere
-
-		int layoutStart = 12;
+		int layoutStart = 14;
 		int descriptionsStart = layoutStart + rows;
 
 		if (lines.Length < descriptionsStart)
@@ -397,4 +455,77 @@ public class AdventureGame
 		if (!IsTraversable(dungeon, row, col))
 			throw new FormatException($"The {name} position must be on a traversable tile.");
 	}
+
+    private List<(int, int)> GetAdjacents(int row, int col)
+    {
+        var adjs = new List<(int, int)>();
+
+        Room r = dungeon[row, col];
+
+        if(r.HasNorth()) {adjs.Add((row - 1, col - 0)); }
+        if(r.HasSouth()) {adjs.Add((row + 1, col + 0)); }
+        if(r.HasWest()) {adjs.Add((row - 0, col - 1)); }
+        if(r.HasEast()) {adjs.Add((row + 0, col + 1)); }
+
+        return adjs;
+    }
+
+    private List<(int row, int col)> FindPathToAdventure()
+    {
+        var start = (row: grueRow, col: grueCol);
+        var goal = (row: aRow, col: aCol);
+
+        var openSet = new PriorityQueue<(int row, int col), int>();
+        var comeFrom  = new Dictionary<(int row, int col), (int row, int col)>();
+        var gScore = new Dictionary<(int row, int col), int>();
+
+        gScore[start] = 0;
+        openSet.Enqueue(start, Heuristic(start, goal));
+
+        while (openSet.Count > 0)
+        {
+            var room = openSet.Dequeue();
+
+            if(room == goal)
+            {
+                return ReconstructPath(comeFrom, room);
+            }
+
+            foreach ( var adjacent in GetAdjacents(room.row, room.col))
+            {
+                int newScore = gScore[room] + 1;
+
+                if (!gScore.TryGetValue(adjacent, out int oldScore) || newScore < oldScore)
+                {
+                    comeFrom[adjacent] = room;
+                    gScore[adjacent] = newScore;
+
+                    int fScore = newScore + Heuristic(adjacent, goal);
+                    openSet.Enqueue(adjacent, fScore);
+                }
+            }
+        }
+
+        return new List<(int row, int col)>();
+    }
+
+    private static int Heuristic((int row, int col) a, (int row, int col) b)
+    {
+        return Math.Abs(a.row - b.row) + Math.Abs(a.col - b.col);
+    }
+
+    private static List<(int row, int col)> ReconstructPath(Dictionary<(int row, int col), (int row, int col)> comeFrom,(int row, int col) current)
+    {
+        var path = new List<(int row, int col)> {current};
+
+        while(comeFrom.ContainsKey(current))
+        {
+            current = comeFrom[current];
+            path.Add(current);
+        }
+
+        path.Reverse();
+        return path;
+    }
+
 }
